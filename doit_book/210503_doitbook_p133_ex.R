@@ -24,6 +24,5 @@ answer <- ifelse(mean_audi_cty>mean_toyota_cty, "audi", "toyota")
 answer
 
 #q3.
-cfg_cty <- filter(df_mpg, manufacturer == "chevrolet" | manufacturer == "ford" |manufacturer == "honda")
-
-mean(cfg_cty$cty)
+df_cfg <- filter(df_mpg, manufacturer %in% c("chevrolet","ford","honda"))
+mean(df_cfg$cty)
