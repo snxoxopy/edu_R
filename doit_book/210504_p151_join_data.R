@@ -1,7 +1,7 @@
 #p151 6-7 데이터 합치기
-test1 <-  data.frame(id=c(1:5), midterm=c(60,80,70,90,85))
+test1 <- data.frame(id=c(1:5), midterm=c(60,80,70,90,85))
 test1
-test2 <-  data.frame(id=c(1:5), final=c(70,83,65,95,80))
+test2 <- data.frame(id=c(1:5), final=c(70,83,65,95,80))
 test2
 test3 <- data.frame(id = c(1,2,3,4,6), score=c(10,20,30,40,50))
 test3
