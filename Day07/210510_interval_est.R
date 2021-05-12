@@ -26,8 +26,8 @@ table(p)
 #https://m.blog.naver.com/PostView.nhn?blogId=lchry&logNo=220477597918&proxyReferer=https:%2F%2Fwww.google.com%2F
 t_25 <- 2.262
 
-p1 <- e_head - t_25 * sigma/sqrt(n)
-p2 <- e_head + t_25 * sigma/sqrt(n)
+p1 <- e_head - t_25 * s_sigma/sqrt(n)
+p2 <- e_head + t_25 * s_sigma/sqrt(n)
 p1
 p2
 
