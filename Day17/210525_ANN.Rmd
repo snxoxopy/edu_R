@@ -1,0 +1,78 @@
+---
+title: "ANN"
+author: "suzinee"
+date: '2021 5 25 '
+output: html_document
+---
+
+### Perceptron
+
+- \hat{y} = f(\sum(x_iW + b))
+- 입력층 + Output Layer
+- 출력 node 개수 1개
+
+### Activation functions
+
+![Activation functions](https://media.vlpt.us/images/hojp7874/post/c5df2d33-8ab2-483f-a24c-5c541eada090/image.png)
+
+
+### MLP(Multi-Layer Perceptron)
+
+- 배경: 비선형 문제를 해결하고자 은닉층을 도입
+
+- 입력층 + hidden layer + O.L
+- Layer 구조
+-- a fully connected network
+-- input layer
+-- weights: 임의의 값으로 학습시작
+-- hidden layer: 학습률과 연관
+
+-- output layer: N가지 정보필요시 (log_2 N) 개의 layer 필요
+-- activation function
+--- simoid function: 2진 분류
+--- soft max function: 3진 이상 분류
+
+- tunning
+-- 메모리 제약에 따라 아래와 같이 모형 설계
+--- famework 지원하는 경우: hidden layer 다수 생성
+--- 미지원 경우: 단일 hidden layer내의 다수 노드 생성
+-- node 개수는 overfitting/underfitting과 연관
+
+
+- loss function
+-- 위 오차가 최소가되는 최적의 W 찾기
+-- 연속형 E = ${\frac{1}{n} \sum{k}{(y_{k}-t_{k})^2}}$
+-- 이산형 E = 
+
+- Adaline
+-- 비용함수는 w의 2차 함수로 근사하여 간주할 수 있다.
+-- 포물선 그래프에 대한 기울이가 가장 작은 지점이 오차가 작은 부분으로 예측할 수 있다.
+- Gradient Descent
+-- ${w^(+) = w + n \frac{\rho E}{\rho w}$ 
+
+- 정규화
+-- 지역, 전역해 문제를 해결하기 위해 필요함
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
