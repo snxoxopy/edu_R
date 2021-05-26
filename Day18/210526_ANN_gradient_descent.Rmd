@@ -1,0 +1,60 @@
+---
+title: "ANN"
+author: "suzinee"
+date: '2021 5 26 '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## MLP
+
+구조  
+1. input layers
+2. hidden layers
+- 비선형 학습
+- 일반적으로 ML framework가 아니라면 단일 hidden layer내에 node 수를 조정
+3. Activation function
+4. output layers
+
+## 경사하강법
+- 비용함수를 최소화 하는 w를 찾기
+- 원리
+  - $ y - \hat(y) $ 값을 입력층으로 feedback하여 조정 -> 비효율
+  - $ f(w) \approx  w^2 $
+  - $ \frac{\partial E}{\partial w} $ -> ifelse 기울기 > 0 -> 이전보다 증가?, w 감소, w 증가
+  - $ \delta w = \eta \delta f(w) $
+  - learning rate: $ \eta $
+
+
+## 역전파알고리즘
+- MLP 학습에 사용되는 통계적 기법
+- 동일 입력층에 대해 원하는 값이 출력되도록 개별 가중치를 조정하는 방법으로 사용
+
+
+## 정규화
+- 필요성: 지역해 문제를 해결하기 위해
+- 원리: 
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

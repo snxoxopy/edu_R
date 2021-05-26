@@ -1,0 +1,167 @@
+---
+title: "unsupervised_learning"
+author: "suzinee"
+date: '2021 5 26 '
+output: html_document
+---
+>Ref. 10_군집화_연관규칙_분해법_knn.pdf
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Clustering
+- label 미존재
+- cf) classification -> label 존재
+- 유사성계산
+  - 행과 행의 유사도 측정
+  - vector 공간으로 이동 for 유클리디안 거리계산
+  - A(x1,y1) B(x2, y2) ->  $\sqrt{(x_2-x_1)^2 + (y_2-y_1)^2}$
+
+
+```{r}
+library(ggplot2)
+data(diamonds)
+head(diamonds)
+str(diamonds)
+
+t <- sample(1:nrow(diamonds), 1000)
+test <- diamonds[t,]
+dim(test)
+test
+
+mydia <- test[c("price","carat","depth","table")]
+
+```
+
+- 계층적 클러스터 p21
+ - 대략적인 그룹(k)의 개수 파악
+```{r}
+library(ggplot2)
+data(diamonds)
+head(diamonds)
+str(diamonds)
+
+t <- sample(1:nrow(diamonds), 1000) # 무작위 1000개 추출
+test <- diamonds[t,]
+dim(test)
+test
+
+
+mydia <- test[c("price","carat","depth","table")]
+
+# dist(mydia) #distance 계산 결과
+
+result <- hclust(dist(mydia), method="ave") # 거리값을 이용한 계층적 군집, method ="ave" 집단을 평균값으로 만듬
+plot(result, hang=-1)
+```
+
+- 예시) hclust 결과 Height 3500~4000 사이 정도에서 군집을 생성할 수 있다.
+
+- hclust를 이용하여 적당한 군집 개수를 파악
+
+- 비계층적 클러스터 p28
+
+```{r}
+result2 <- kmeans(mydia,3) # 군집수 3
+names(result2)
+result2
+str(result2)
+
+# k값 선정을 위해 확인해야할 지표
+# tot.withinss: 군집내 분산값
+# betweenss: 군집간 분산값
+
+g1 <- subset(mydia, result2$cluster==1)
+summary(g1)
+g2 <- subset(mydia, result2$cluster==2)
+g3 <- subset(mydia, result2$cluster==3)
+
+summary(g2) # price-mean 13595 carat-mean 1.724
+summary(g3) # price-mean 6125  carat-mean 1.138
+str(mydia)
+
+#dist: \sqrt((mydia$price[2] - mydia$price[1])^2 + (mydia$carat[2] - mydia$carat[1])^2 + (mydia$depth[2]-mydia$depth[1])^2 + (mydia$table[2]-mydia$table[1])^2)
+
+```
+
+
+```{r mydia, echo=FALSE}
+mydia$cluster <- result2$cluster
+head(mydia)
+cor(mydia[,-5], method ="pearson")
+plot(mydia[,-5])
+plot(mydia$carat, mydia$price, col=mydia$cluster)
+```
+
+
+```{r}
+mydia.out.withness<- c()
+mydia.out.between <- c()
+for (i in 2:7){ # 굮집수를 k=2~7까지 변화시켜가며 클러스터링 시행
+  set.seed(1)
+  mydia.out <- kmeans(mydia[,-5], centers=i)
+  mydia.out.withness[i-1] <- mydia.out$tot.withinss # 군집 내 제곱 합의 합
+  mydia.out.between[i-1] <- mydia.out$betweenss     # 군집 간 제곱 합의 합
+}
+data.frame(mydia.out.withness, mydia.out.between)
+
+visual <- NULL
+
+for(i in 2:7){
+  set.seed(0723)
+ eval(parse(text=paste("result",i,"<- kmeans(mydia[,-5],",i,");",sep=""))) 
+ eval(parse(text=paste("visual[",i,"] <- result",i,"$tot.withinss",sep=""))) 
+}
+
+plot(visual[-1], type="l", ylab="", xlab="", main="cluster의 개수에 따른 내
+부분산") 
+abline(v=3,col="red")
+```
+
+
+- 1 -> k=2일 때
+- 2 -> k=3일 때
+- k 증가 -> 군집내 분산 감소, 군집간 분산 증가
+- 위 결과 중 분산감소 폭이 큰 k를 선택하는 것이 적절하다.
+
+
+## 연습문제
+>  통계학2 제본책 /군집분석
+
+```{r}
+setwd("C:\\r_suzin\\Data\\MLData")
+df_acdm <- read.csv("academy.csv")
+
+```
+
+
+## 2. 연관규칙
+
+
+
+## Lib.in R
+
+install.packages("arules")
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
