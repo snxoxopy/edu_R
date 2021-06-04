@@ -1,0 +1,1288 @@
+---
+title: 🎥영화 추천시스템 모델 구축
+author: <p align="right"> 2조 </p>
+date: <p align="right"> `r format(Sys.Date())` </p>
+output:
+  html_document:
+    theme: cosmo
+    highlight: textmate
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    code_folding: hide
+    df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=T, fig.align = "center", message=F, warning=F, fig.height = 3, fig.width = 4, cache=T, dpi = 300, dev = "png")
+```
+
+# 1. 영화 데이터 분석
+## 1.1. 무비렌즈 데이터
+```{r 환경설정}
+setwd("C:\\r_suzin\\PRJ")
+#라이브러리 ------------------------
+#전처리
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+library(naniar)
+library(skimr)
+#시각화
+library(ggplot2)
+library(ggthemes)
+library(multilinguer)
+library(RColorBrewer)
+library(wordcloud)
+#추천알고리즘
+library(recommenderlab)
+
+#데이터 불러오기 -------------------
+movies <- read.csv('./data/movies.csv',header=T)
+ratings <- read.csv('./data/ratings.csv',header=T) 
+tags <- read.csv('./data/tags.csv',header=T)
+
+View(ratings)
+find_mvs <- which(ratings$userId == "610")
+find_mvs
+find_mvs2 <- ratings$movieId[find_mvs]
+find_rt <- as.data.frame(ratings$rating[find_mvs])
+View(find_rt)
+print(find_rt)
+str(find_rt)
+idx = 0
+idx2 = 0
+for (mvids in movies$movieId)
+{
+  idx = idx + 1
+  for (mvs610 in find_mvs2)
+  {
+    
+      if (mvs610 == mvids){
+        idx2 = idx2 + 1
+        cat(movies$title[idx],"-" , find_rt[idx2,1],"\n")
+      }
+    
+  }
+  
+}
+
+find610_summary <- ratings %>% filter(userId == 610) %>% summarise(movieId)
+str(find610_summary)
+
+
+find610_gt4 <- ratings %>% filter(userId == 610 & rating>=4)
+View(find610_gt4)
+find610_gt4_mvid <- find610_gt4$movieId
+find610_gt4_idxtitles <- which(movies$movieId %in% find610_gt4_mvid)
+find610_gt4_titles <- movies$title[find610_gt4_idxtitles]
+print(find610_gt4_titles)
+
+find610_lt2 <- ratings %>% filter(userId == 610 & rating<=2)
+find610_lt2_mvid <- find610_lt2$movieId
+find610_lt2_idxtitles <- which(movies$movieId %in% find610_lt2_mvid)
+find610_lt2_titles <- movies$title[find610_lt2_idxtitles]
+print(find610_lt2_titles)
+
+
+
+idx = 0
+idx2 = 0
+for (mvids in find610_gt4$movieId)
+{
+  idx = idx + 1
+  for (mvs610 in find_mvs2)
+  {
+    
+      if (mvs610 == mvids){
+        idx2 = idx2 + 1
+        cat(movies$title[idx],"-" , find_rt[idx2,1],"\n")
+      }
+    
+  }
+  
+}
+
+
+
+# saveRDS(movies, file="./data/movie_data.rds")
+# saveRDS(ratings, file="./data/ratings_data.rds")
+```
+## 1.2. 무비렌즈 데이터 전처리
+  캐글에서 무비렌즈 데이터("movies", "ratings", "tags") csv 파일을 수집한 후 사용자 평점데이터, 영화데이터, 태그데이터를 살펴보고 적절한 전처리를 수행하였다.
+```{r 전처리}
+setwd("C:\\r_suzin\\PRJ")
+#데이터 크기 확인 -------------------
+datafiles <- c("movies", "ratings", "tags")
+suf <- ".csv"
+
+for (f in datafiles) {
+    path <- file.path("./data/", paste0(f, suf))
+    assign(f, read_csv(path, col_types = cols()))
+    print(paste(f, "파일크기:", format(object.size(get(f)), units="Mb")))
+}
+
+#데이터 전처리 -------------------------------
+##사용자 평점 데이터
+df_ratings <- ratings %>%
+    mutate(timestamp = as_datetime(timestamp))
+
+glimpse(df_ratings)
+skim(df_ratings)
+
+##영화 데이터
+df_movies <- movies %>%
+    mutate(title = str_trim(title)) %>%
+    extract(title, c("title_tmp", "year"), regex = "^(.*) \\(([0-9 \\-]*)\\)$", remove = FALSE) %>%
+    mutate(year = ifelse(str_length(year) > 4, as.integer(str_split(year, "-", simplify = TRUE)[1]), as.integer(year))) %>%
+    mutate(title = ifelse(is.na(title_tmp), title, title_tmp)) %>%
+    select(-title_tmp)  %>%
+    mutate(genres = ifelse(genres == "(no genres listed)", `is.na<-`(genres), genres))
+
+glimpse(df_movies)
+skim(df_movies)
+
+##태그 데이터
+df_tags <- tags %>%
+    mutate(timestamp = as_datetime(timestamp))
+
+glimpse(df_tags)
+skim(df_tags)
+```
+## 1.3. 탐색적 데이터 분석
+  영화 추천시스템을 구현하기 위해서 각 데이터에서 찾을 수 있는 정보가 무엇이 있을까?
+  
+  - 사용자 평점을 기반하여 연도별 가장 인기 있는 영화는 뭐였을까?
+  - 사용자 평점을 기반하여 장르별 가장 인기 있는 영화는 뭐였을까?
+  - 어떤 장르의 영화가 많을까?
+  - 연도별 영화가 몇편이나 개봉되었을까?
+  - 태그는 각 영화에 어떤 특성을 나타내고 있을까? 태그 내용을 확인해보자.
+  
+```{r 평점탐색}
+#탐색적 데이터 분석 
+## 평점 기반 연도별 인기 영화 --------------------------
+avg_rating <- df_ratings %>%
+    inner_join(df_movies, by = "movieId") %>%
+    na.omit() %>%
+    select(movieId, title, rating, year) %>%
+    group_by(movieId, title, year) %>%
+    summarise(count = n(), mean = mean(rating), min = min(rating), max = max(rating)) %>%
+    ungroup() %>%
+    arrange(desc(mean))
+
+weighted_rating <- function(R, v, m, C) {
+    return (v/(v+m))*R + (m/(v+m))*C
+}
+# R = average for the movie (mean) = (Rating)
+# v = number of votes for the movie = (votes)
+# m = minimum votes required to be listed in the Top 250
+# C = the mean vote across the whole report
+```
+평점으로 인기 영화를 알아볼 때 TMDB Ratings을 사용하였고 IMDB의 weighted rating 공식을 사용하여 평점에 가중치를 주었다. 아래 표에서 weighted rating(wr)을 확인할 수 있다.
+```{r 평점탐색2}
+avg_rating <- avg_rating %>%
+    mutate(wr = weighted_rating(mean, count, 500, mean(mean))) %>%
+    arrange(desc(wr))
+
+avg_rating %>%
+    mutate(decade = year  %/% 10 * 10) %>%
+    arrange(year, desc(wr)) %>%
+    group_by(decade) %>%
+    summarise(title = first(title), wr = first(wr), mean = first(mean), count = first(count)) %>% 
+    DT::datatable() %>% 
+    DT::formatRound("count", digits = 0, interval = 3)
+
+
+## 가중치 평균 분포 확인
+hist(avg_rating$wr)
+hist(scale(avg_rating$wr))
+hist(log(avg_rating$wr))
+hist(scale(log(avg_rating$wr)))
+wr2 <- scale(log(avg_rating$wr))
+wr2 <- log(avg_rating$wr)
+
+y <- quantile(wr2, c(0.25, 0.75)) 
+x <- qnorm( c(0.25, 0.75))
+slope <- diff(y) / diff(x) 
+int <- y[1] - slope * x[1]
+ggplot(avg_rating) + 
+  stat_qq(aes(sample=log(wr))) +
+  geom_abline(intercept=int, slope=slope, color="steelblue3") + 
+  labs(title="가중치 평균평점 Q-Q plot")
+
+
+## 평점 기반 장르별 인기 영화 --------------------------
+genres_rating <- df_movies %>%
+    na.omit() %>%
+    select(movieId, year, genres) %>%
+    inner_join(df_ratings, by = "movieId") %>%
+    select(-timestamp, -userId) %>%
+    mutate(decade = year  %/% 10 * 10) %>%
+    separate_rows(genres, sep = "\\|") %>%
+    group_by(year, genres) %>%
+    summarise(count = n(), avg_rating = mean(rating)) %>%
+    ungroup() %>%
+    mutate(wr = weighted_rating(mean, count, 500, mean(mean))) %>%
+    arrange(year)
+
+genres_rating %>%
+    filter(genres %in% c("Drama", "Comedy", "Horror", "Thriller")) %>%
+    ggplot(aes(x = year, y = wr)) +
+    geom_line(aes(group=genres, color=genres)) +
+    geom_smooth(aes(group=genres, color=genres)) +
+    facet_wrap(~genres)
+```
+
+```{r 연도별영화탐색}
+##연도별 영화 분석 ---------------------------
+movies_per_year <- df_movies %>%
+    na.omit() %>%
+    select(movieId, year) %>%
+    group_by(year) %>%
+    summarise(count = n())  %>%
+    arrange(year)
+
+#y=연도별 출시 영화빈도수, x=연도
+movies_per_year %>%
+    complete(year = full_seq(year, 1), fill = list(count = 0)) %>% 
+    #filter(year <=2015) %>% 
+    ggplot(aes(x = year, y = count)) +
+    geom_line(color="steelblue3", size=1.5) +
+    scale_y_continuous(labels=scales::comma) +
+    labs(x="year", y="freq.") + theme_tufte()
+```
+1902년부터 2018년까지의 영화데이터이다. 매년 증가함에 따라 매년 영화의 수가 증가하고 있고 1975년 이후로 영화 개봉 빈도수가 급격하게 증가하는 것을 볼 수 있다. 2000년대에 진입하면서 영화 개봉 수가 가장 많았고 2015년 이후로 급격히 줄었다. 데이터를 미수집했을 가능성도 있을 것 같다.
+```{r 연도별장르탐색}
+##연도별 장르 분석 ---------------------------
+df_movies %>%
+    separate_rows(genres, sep = "\\|") %>% 
+    count(genres) %>% 
+    arrange(desc(n)) %>% 
+    mutate(비율 = scales::percent(n/sum(n, na.rm=TRUE)),
+             누적비율 = scales::percent(cumsum(n/sum(n, na.rm=TRUE)))) %>% 
+    select(영화장르=genres, 장르빈도수=n, 장르비율=비율, 누적비율) %>% 
+    DT::datatable() %>% 
+    DT::formatRound("장르빈도수", interval=3, digits=0)
+
+##연도별 영화 개봉 수 y=연도별 출시 영화빈도수, x=연도
+df_movies %>%
+    separate_rows(genres, sep = "\\|") %>%
+    na.omit() %>% 
+    mutate(genres = as.factor(genres)) %>% 
+    group_by(year, genres) %>%
+    summarise(number = n()) %>%
+    complete(year = full_seq(year, 1), genres, fill = list(number = 0)) %>% 
+    filter(genres %in% c("Drama", "Comedy", "Thriller", "Action", "Romance", "Sci-Fi", "Horror")) %>%
+    filter(year >= 1900 & year <= 2015) %>% 
+    ggplot(aes(x = year, y = number)) +
+    geom_line(aes(color=genres), size=1) +
+    scale_fill_brewer(palette = "Paired") +
+    labs(x="year", y="freq.", color="장르") + 
+    theme_tufte() + theme(legend.position = "top")
+```
+영화장르별 장르빈도수를 확인해본 결과 Drama, Comedy, Thriller, Action, Romance 순으로 많았다. 특히 Drama와 Comedy는 각각 비율이 19.74%, 17%이고 두 장르의 누적 비율이 45%에 달하여 상대적으로 다른 장르에 비해 많은 비율을 차지하고 있다. 이를 통해 사람들의 영화 장르 선호도를 예상해볼 수 있었고 추천 장르로 Drama와 Comedy가 자주 등장할 것으로 예상해 볼 수 있겠다.
+```{r 장르별태그탐색}
+##장르별 태그 분석 ---------------------------
+genres_tags <- df_movies %>%
+    na.omit() %>%
+    select(movieId, year, genres) %>%
+    separate_rows(genres, sep = "\\|") %>%
+    inner_join(df_tags, by = "movieId") %>%
+    select(genres, tag) %>%
+    group_by(genres) %>%
+    nest()
+
+# Drama, Comedy, Thriller, Action, Romance, Sci-Fi == 7 4 9 15 6 12
+stock = genres_tags$genres
+genre<-stock[6]
+genre_words <- genres_tags %>%
+    filter(genres == genre) %>%
+    unnest() %>%
+    mutate(tag = str_to_lower(tag, "en")) %>%
+    anti_join(tibble(tag=c(tolower(genre)))) %>%
+    count(tag)
+
+wordcloud(genre_words$tag, genre_words$n, max.words = 50, colors=brewer.pal(8, "Paired"))
+```
+장르빈도수가 가장 많았던 장르 위주로 태그 내용을 워드클라우드를 통해 대략적으로  확인해보았다.
+```{r 태그탐색, eval=FALSE}
+#태그 목록에 나타나는 횟수계산
+df1 = genres_tags$data[[1]]
+df2 = genres_tags$data[[2]]
+#anti_join(df1,df2) # df1에는 있고 df2에는 없는 tag를 출력해줌
+df3 = genres_tags$data[[3]]
+df4 = genres_tags$data[[4]]
+df5 = genres_tags$data[[5]]
+df6 = genres_tags$data[[6]]
+df7 = genres_tags$data[[7]]
+df8 = genres_tags$data[[8]]
+df9 = genres_tags$data[[9]]
+df10 = genres_tags$data[[10]]
+df11 = genres_tags$data[[11]]
+df12 = genres_tags$data[[12]]
+df13 = genres_tags$data[[13]]
+df14 = genres_tags$data[[14]]
+df15 = genres_tags$data[[15]]
+df16 = genres_tags$data[[16]]
+df17 = genres_tags$data[[17]]
+df18 = genres_tags$data[[18]]
+df19 = genres_tags$data[[19]]
+
+df1_tag = df1[which(duplicated(df1)|duplicated(df1,fromLast=T)),]
+df2_tag = df2[which(duplicated(df2)|duplicated(df2,fromLast=T)),]
+df3_tag = df3[which(duplicated(df3)|duplicated(df3,fromLast=T)),]
+df4_tag = df4[which(duplicated(df4)|duplicated(df4,fromLast=T)),]
+df5_tag = df5[which(duplicated(df5)|duplicated(df5,fromLast=T)),]
+
+df6_tag = df6[which(duplicated(df6)|duplicated(df6,fromLast=T)),]
+df7_tag = df7[which(duplicated(df7)|duplicated(df7,fromLast=T)),]
+df8_tag = df8[which(duplicated(df8)|duplicated(df8,fromLast=T)),]
+df9_tag = df9[which(duplicated(df9)|duplicated(df9,fromLast=T)),]
+df10_tag = df10[which(duplicated(df10)|duplicated(df10,fromLast=T)),]
+
+df11_tag = df11[which(duplicated(df11)|duplicated(df11,fromLast=T)),]
+df12_tag = df12[which(duplicated(df12)|duplicated(df12,fromLast=T)),]
+df13_tag = df13[which(duplicated(df13)|duplicated(df13,fromLast=T)),]
+df14_tag = df14[which(duplicated(df14)|duplicated(df14,fromLast=T)),]
+df15_tag = df15[which(duplicated(df15)|duplicated(df15,fromLast=T)),]
+
+df16_tag = df16[which(duplicated(df16)|duplicated(df16,fromLast=T)),]
+df17_tag = df17[which(duplicated(df17)|duplicated(df17,fromLast=T)),]
+df18_tag = df18[which(duplicated(df18)|duplicated(df18,fromLast=T)),]
+df19_tag = df19[which(duplicated(df19)|duplicated(df19,fromLast=T)),]
+
+barplot(table(df1_tag))
+barplot(table(df2_tag))
+barplot(table(df3_tag))
+barplot(table(df4_tag))
+barplot(table(df5_tag))
+barplot(table(df19_tag))
+```
+
+</br></br>
+
+---
+
+</br></br>
+
+# 2. 영화 추천 알고리즘
+
+```  
+영화 추천 시스템을 구축하는 방법에는 여러 가지가 있다.
+  
+  1. Simple Recommender : 이 접근 방식은 특정 기준에 따라 모든 영화의 순위를 매긴 다음 개별 선호도를 고려하지 않고 사용자에게 최고의 영화를 제안한다. 예를 들어 Netflix의 '오늘 미국 내 상위 10 위'가 될 수 있다.
+
+  2. 협업 필터링 : 이 접근 방식은 사용자의 과거 행동을 활용하여 사용자가 관심을 가질만한 항목을 예측한다. 사용자가 이전에 본 영화, 해당 항목에 부여 된 숫자 등급 및 유사한 사용자가 이전에 본 영화를 고려한다.
+
+  3. 콘텐츠 기반 필터링 : 이 접근 방식은 특정 항목의 속성과 메타 데이터를 활용하여 유사한 특성을 가진 다른 항목을 제안한다. 예를 들어 추천자는 영화의 장르와 감독을 분석하여 유사한 속성을 가진 추가 영화를 추천 할 수 있다.
+```
+
+## 2.0. 군집화분석
+  장르, 태그 내용 모아서 table
+```{r}
+setwd("C:\\r_suzin\\PRJ")
+# 군집분석 code
+user_genres2 <- read.csv("./data/user_genres.csv", header=T)
+View(user_genres2)
+ug <- user_genres2 %>% 
+  group_by(userId, genres) %>%
+  summarise(mean_rating=mean(rating))
+ug2 <- xtabs(mean_rating ~ userId + genres, ug)
+df_ug <- as.data.frame.matrix(ug2)[unique(user_genres2$userId), ]
+
+# clustering
+result <- hclust(dist(df_ug),method="average") # 평균거리값을 이용한 계층적 군집화
+plot(result,hang=-1) # 위 시각화
+
+result2 <- kmeans(df_ug,6)
+names(result2)
+
+g1<-subset(df_ug, result2$cluster==1)
+g2<-subset(df_ug, result2$cluster==2)
+g3<-subset(df_ug, result2$cluster==3)
+g4<-subset(df_ug, result2$cluster==4)
+g5<-subset(df_ug, result2$cluster==5)
+g6<-subset(df_ug, result2$cluster==6)
+
+summary(g1)
+summary(g2)
+
+#비계층적모델
+df_ug$cluster<-result2$cluster
+head(df_ug)
+cor(df_ug[,-21], method="pearson")
+
+#적잘한 군집k찾기
+df_ug.out.withness<-c()
+df_ug.out.between<-c()
+for (i in 2:10){ 
+ set.seed(1)
+ df_ug.out<-kmeans(df_ug[,-21], centers=i)
+ df_ug.out.withness[i-1]<-df_ug.out$tot.withinss #군집 내 제곱합의 합
+ df_ug.out.between[i-1]<-df_ug.out$betweenss #군집 간 제곱합의 합
+}
+data.frame(df_ug.out.withness, df_ug.out.between) 
+visual <- NULL
+for(i in 2:10){
+ 
+  set.seed(0723)
+  eval(parse(text=paste("result",i,"<- kmeans(df_ug[,-21],",i,");",sep="")))
+  eval(parse(text=paste("visual[",i,"] <- result",i,"$tot.withinss",sep="")))
+}
+
+plot(visual[-1], type="l", ylab="", xlab="", main="cluster의 개수에 따른 내부분산")
+abline(v=6,col="red")
+abline(v=8,col="red") # 경사가 급격하게 줄어들다가 완만해지는 6~개의 군집으로 분류하는게 좋다?
+
+table(df_ug$cluster)
+pie(table(df_ug$cluster))
+```
+
+## 2.1. 협업필터링(평점, 장르)
+  1. 유저기반(UBCF)
+    - 해당 유저와 취향이 비슷한 유저가 좋게 평가한 것을 추천
+    - 더 정교함
+    - 유저가 신규 진입할때마다 계산해야 해서 구현에 시간이 더 걸림
+    
+  2. 상품기반(IBCF)
+    - 상품간 유사도 바탕
+    - 미리 계산해 놓기 때문에 신규 진입할때마다 계산할 필요가 없음
+    
+  3. 추천시스템 평가지표
+    - ROC곡선
+    - 정확도:  사용자가 실제 선택한 아이템 수 / 전체 측정된 아이템 수
+    - 재현율: 맞는 추천 아이템 수 / 사용자가 선택한 전체 아이템 수
+
+```{r 2.1 평점데이터준비, eval=FALSE}
+#분석데이터준비 ------------------------
+#무비id 오름차순 정렬 후 새 인덱스 부여
+m <- m[order(m$movieId),]
+m$idx <- 1:nrow(m)
+
+#movies-rating 병합: mr
+mr <- merge(m, r, key='movieId', all.y=T)
+mr <- mr[,-c(1,7)]
+mr <- mr[,-c(2,3)]
+
+sum(duplicated(mr)) #[1] 3
+which(duplicated(mr)|duplicated(mr,fromLast=T))
+mr[which(duplicated(mr)|duplicated(mr,fromLast=T)),]
+mr <- mr[-which(duplicated(mr)|duplicated(mr,fromLast=T)),]
+mr <- mr[-c(80209,88669),]
+
+View(mr)
+
+#write.csv(mr, "./data/mr.csv",row.names = F)
+```
+```{r 2.1 평점CF split}
+
+#데이터형을 realRatingMatrix로 변환 -------------------------------
+setwd("C:\\r_suzin\\PRJ\\")
+
+
+c_movies <- unique(df_movies$movieId)
+r_users <- unique(df_ratings$userId)
+View(r_users)
+
+# MAT 610 x 9742 for IBCF
+mat_moviesId_usersId <- matrix(0,length(r_users),length(c_movies))
+
+
+colnames(mat_moviesId_usersId) <- df_movies$movieId[unique(df_movies$movieId)]
+rownames(mat_movies_users) <- df_ratings$userId[unique(df_movies$userId)]
+View(mat_moviesId_usersId)
+
+for (rows in 1:nrow(mat_moviesId_usersId)){
+  for(cols in 1:ncol(mat_moviesId_usersId)){
+    #movieId가 같은 경우
+    col_users = which(mat_movies_users[1,] == df_ratings[rows, 2])
+    mat_moviesId_usersId[rows+1, col_users] <- df_ratings$rating[rows]
+  }
+}
+
+View(mat_moviesId_usersId)
+
+
+ratingMatrix <- dcast(df_ratings, userId~movieId, value.var = "rating", na.rm = FALSE)
+ratingMatrix <- as.matrix(ratingMatrix[,-1]) # remove userID
+View(ratingMatrix)
+
+ratingMatrix <- as(ratingMatrix, "realRatingMatrix")
+
+mat_similarity <- similarity(ratingMatrix[1:4, ], method = "pearson", which = "items")
+as.matrix(mat_similarity)
+image(as.matrix(mat_similarity), main = "item's similarity")
+
+
+# mr <- read.csv("./data/mr.csv", header=T)
+# mr <- mr[,c(2,1,3)]
+# View(mr)
+# user_mr <- as(mr, "realRatingMatrix")
+# View(user_mr)
+# image(user_mr[1:100, 1:100], main = "Real rating matrix") #sparse
+
+#머신러닝을 위해 학습데이터선정 -----------------------------------
+set.seed(2021)
+index <- sample(1:nrow(ratingMatrix), size = nrow(ratingMatrix)*0.8)
+train <- ratingMatrix[index, ]
+#test set은 추천 받을 사용자리스트가 될거임
+recommenderUserList  <- ratingMatrix[-index,]
+
+#행의 총합 25개 이상의 아이템(영화)만 선택 ------------------------
+#아이템이 적은 것은 왜곡된 추천결과를 보내줄 수 있음
+train2 <- train[rowCounts(train)>25]
+check = as(train2, "matrix") #429*9719
+#evaluationScheme() -----------------------------------------------
+#추천 평가 방식
+#split분할, cross-validation교차검정(전체 데이터셋을 k개로 나눈다)
+#k 시뮬레이션 반복횟수
+#given 사람당 평가하는 아이템 수
+#goodrating 실제 사용 등급이 3이상이면 모두 평가에 포함
+#시뮬레이션 실행할 때마다 결과가 바뀜
+#너무많이 돌려도 개선에 좋은 것은 아니고 적게 돌려도 편차가가 크다. 적당한 k 
+eval_sets <- evaluationScheme(data = train2, 
+                              method = "split",
+                              train = .8, 
+                              given = 6,
+                              goodRating = 3.5, 
+                              k = 3)
+##추천모델생성 -----------------------------------------------------
+#Recommender() 추천시뮬레이션
+#data: train dataset으로 설정된 데이터프레임
+#method: 사용할 추천방법정의
+#parameter: 추천알고리즘의 파라미터(cosine/pearson)
+mr_UBCF <- Recommender(train2, 
+                      method = "UBCF",
+                      parameter="Cosine")
+mr_UBCF
+
+mr_IBCF <- Recommender(train2, 
+                      method = "IBCF",
+                      parameter="Cosine") # 시간소요
+mr_IBCF
+##추천모델평가 -----------------------------------------------------
+#추천
+UBCFlist <- predict(mr_UBCF, recommenderUserList, n=5)
+IBCFlist <- predict(mr_IBCF, recommenderUserList, n=5)
+#추천 받은 리스트
+head(as(UBCFlist, "list"),2) # 18번 유저에게 다음 5개 영화를 추천
+head(as(IBCFlist, "list"),2) # 18번 유저에게 다음 5개 영화를 추천
+
+IBCFlist@items
+
+View(IBCFlist)
+
+#사실상 추천과정 끝. 모델 결과표와 그래프를 생성-------------------
+#시뮬레이션에 사용할 알고리즘과 유사도 지표 종류 지정--------------
+
+mr_al_UBCF <- list("user-based CF_Cosine" = list(name="UBCF",
+                                                 parameter=
+                                                   list(method="Cosine")),
+                   "user-based CF_Pearson" = list(name="UBCF",
+                                                 parameter=
+                                                   list(method="Pearson")))
+
+mr_al_IBCF <- list("item-based CF_Cosine" = list(name="IBCF",
+                                                 parameter=
+                                                   list(method="Cosine")),
+                   "item-based CF_Pearson" = list(name="IBCF",
+                                                 parameter=
+                                                   list(method="Pearson")))
+#evaluate() -------------------------------------------------------
+#evaluationScheme을 통해 주어진 추천 모델의 목록을 평가
+#algorithms 사용할 알고리즘(시뮬레이션) 지정
+#n: 추천받을객체수(ubcf - 사람, ifcf - 아이템)
+# result1 <- evaluate(eval_sets, mr_al_UBCF, n=c(1,3,5))
+# result1
+# avg(result1)
+# 오류해결x
+result2 <- evaluate(eval_sets, mr_al_IBCF, n=c(1,3,5))
+result2
+names(result2)
+avg(result2)
+#핵심적으로 볼 것은 precision과 recall, 직관적으로 그래프를 통해 보자.
+plot(result2, annotate=T, legend="topleft") #ROC) IBCF 경우 코사인방식이 더 성능이 좋다.
+plot(result2, annotate=T, "prec/rec", legend="bottomright") #pre/rec)
+#그래프를 보고 ubcf, ibcf 추천성능 비교
+#매개변수튜닝 위 반복
+```
+```{r 2.1 평점CF cross-validation}
+eval_sets2 <- evaluationScheme(data = train2, 
+                              method = "cross-validation",
+                              train = .8, 
+                              given = 6,
+                              goodRating = 3.5, 
+                              k = 3)
+##추천모델생성 -----------------------------------------------------
+mr_UBCF2 <- Recommender(train2, 
+                      method = "UBCF",
+                      parameter="Cosine")
+mr_UBCF2
+
+mr_IBCF2 <- Recommender(train2, 
+                      method = "IBCF",
+                      parameter="Cosine") # 시간소요
+mr_IBCF2
+##추천모델평가 -----------------------------------------------------
+#추천
+UBCFlist2 <- predict(mr_UBCF2, recommenderUserList, n=5)
+IBCFlist2 <- predict(mr_IBCF2, recommenderUserList, n=5)
+#추천 받은 리스트
+head(as(UBCFlist2, "list"),2) 
+head(as(IBCFlist2, "list"),2)
+
+mr_al_UBCF <- list("user-based CF_Cosine" = list(name="UBCF",
+                                                 parameter=
+                                                   list(method="Cosine")),
+                   "user-based CF_Pearson" = list(name="UBCF",
+                                                 parameter=
+                                                   list(method="Pearson")))
+
+mr_al_IBCF <- list("item-based CF_Cosine" = list(name="IBCF",
+                                                 parameter=
+                                                   list(method="Cosine")),
+                   "item-based CF_Pearson" = list(name="IBCF",
+                                                 parameter=
+                                                   list(method="Pearson")))
+algorithms
+#evaluate() -------------------------------------------------------
+result_uu <- evaluate(eval_sets2, mr_al_UBCF, n=c(1,3,5))
+result_uu
+avg(result_uu)
+# 오류해결x
+
+#####################################################################
+#####################################################################
+result_ui <- evaluate(eval_sets2, mr_al_IBCF, n=c(1,3,5))
+names(result_ui)
+avg(result_ui)
+saveRDS(result_ui, "./data/result_ui.rds") # 평점 알고리즘=mr_al_IBCF
+
+result_al <- evaluate(eval_sets2, algorithms, n=c(1,3,5))
+names(result_al)
+avg(result_al)
+saveRDS(result_al, "./data/result_al.rds") # 평점 알고리즘=algorithms
+##################################################################### 평점 최종 비교결정
+plot(result_ui, annotate=T, legend="topleft") # ifcf cosine > pearson
+plot(result_ui, annotate=T, "prec/rec", legend="bottomright") # ifcf cosine > pearson
+plot(result_al, annotate=T, legend="topleft")
+plot(result_al, annotate=T, "prec/rec", legend="bottomright")
+
+##################################################################### 평점 수치니까 rmse
+```
+
+# 평점 최종
+```{r 평점 최종}
+#####################################################################
+## SVD_ P
+rating_final_eval <- evaluationScheme(data = df,
+                              method = "cross-validation",
+                              train = 0.8,
+                              k = 3,
+                              goodRating = 3,
+                              given = 20)
+
+# Training dataset modeling ------------------------ (1)
+rating_SVD_P <- Recommender(data = getData(rating_final_eval, "train"),
+                           method = "SVD", 
+                           parameter = "Pearson")
+rating_SVD_P
+
+#######################특정유저에 대한 최종예측영화리스트
+# Prediction
+rating_SVD_P_list <- predict(rating_SVD_P, 
+                     newdata = getData(rating_final_eval, "known"),
+                     n = 10, type = "topNList")
+rating_SVD_P_list@items$`610`
+##############################################
+
+rating_SVD_P_pred <- predict(rating_SVD_P, 
+                     newdata = getData(rating_final_eval, "known"),
+                     n = 10, type = "ratings")
+
+# Calculate accuracy
+rating_SVD_P_pred_acc <- calcPredictionAccuracy(x = rating_SVD_P_pred,
+                                        data = getData(rating_final_eval, "unknown"),
+                                        byUser = TRUE) # byUser = TRUE : 각 사용자들에 대한 모델의 정확도가 계산
+#head(accuracy_eval, 10)
+colMeans(rating_SVD_P_pred_acc, na.rm=T) #정확도 #################################### 최종 rmse
+
+rating_SVD_P_pred_acc2 <- evaluate(x = rating_final_eval, 
+                           method = "SVD",
+                           parameter = "Pearson")
+head(getConfusionMatrix(rating_SVD_P_pred_acc2))
+
+plot(rating_SVD_P_pred_acc)
+plot(rating_SVD_P_pred_acc2, annotate=T, legend="topleft")
+plot(rating_SVD_P_pred_acc2, annotate=T, "prec/rec", legend="bottomright")
+#####################################################################
+#####################################################################
+
+## IBCF_C
+rating_final_eval <- evaluationScheme(data = df,
+                              method = "cross-validation",
+                              train = 0.8,
+                              k = 3,
+                              goodRating = 3,
+                              given = 20)
+
+# Training dataset modeling ------------------------ (1)
+rating_IBCF_C <- Recommender(data = getData(rating_final_eval, "train"),
+                           method = "IBCF", 
+                           parameter = "Cosine")
+rating_IBCF_C
+# Prediction
+rating_IBCF_C_pred <- predict(rating_IBCF_C, 
+                     newdata = getData(rating_final_eval, "known"),
+                     n = 10, type = "ratings")
+rating_IBCF_C_pred 
+# Calculate accuracy
+rating_IBCF_C_pred_acc <- calcPredictionAccuracy(x = rating_IBCF_C_pred,
+                                        data = getData(rating_final_eval, "unknown"),
+                                        byUser = TRUE) # byUser = TRUE : 각 사용자들에 대한 모델의 정확도가 계산
+#head(accuracy_eval, 10)
+colMeans(rating_IBCF_C_pred_acc, na.rm=T) #정확도 #################################### 최종 rmse
+
+rating_IBCF_C_pred_acc2 <- evaluate(x = rating_final_eval, 
+                           method = "IBCF",
+                           parameter = "Cosine")
+head(getConfusionMatrix(rating_IBCF_C_pred_acc2))
+
+plot(rating_IBCF_C_pred_acc)
+plot(rating_IBCF_C_pred_acc2, annotate=T, legend="topleft")
+plot(rating_IBCF_C_pred_acc2, annotate=T, "prec/rec", legend="bottomright")
+
+```
+
+```{r 2.2 장르데이터준비, eval=FALSE}
+#데이터구축 ------------------------
+user_genres <- merge(movies, ratings, key='movieId', all.y=T)
+View(user_genres)
+user_genres2 <- data.table()
+n <- nrow(user_genres)
+for (i in 1:n){
+
+  #print(i)
+
+  name_index <- as.character(user_genres[i, 1])
+  item_index <- as.character(user_genres[i, 3])
+  userId <- as.character(user_genres[i, 4])
+  rating <- as.character(user_genres[i, 5])
+
+  item_index_split_temp <- data.frame(strsplit(item_index, split = '\\|'))
+  m_temp <- data.frame(cbind(name_index, item_index_split_temp, userId, rating))
+
+  names(m_temp) <- c("movieId", "genres", "userId", "rating")
+
+  user_genres2 <- rbind(user_genres2, m_temp)
+}
+rm(name_index, item_index, item_index_split_temp, m_temp)
+user_genres2$rating <- as.numeric(user_genres2$rating)
+user_genres2$genres <- gsub("\\(no genres listed\\)", "Unknown", user_genres2$genres)
+user_genres <- as.data.frame(user_genres2)
+
+glimpse(user_genres)
+write.csv(user_genres, "./data/user_genres.csv",row.names = F)
+View(user_genres)
+```
+```{r 2.2 장르CF cross-validation}
+#유저별 장르 평균평점 계산 --------------------------
+user_genres <- read.csv("./data/user_genres.csv", header = T)
+user_genres <- user_genres[,c(3,2,4)]
+head(user_genres)
+
+user_mg <- as(user_genres, "realRatingMatrix")
+image(user_mg[1:10, 1:20], main = "Real rating matrix") #sparse
+#머신러닝을 위해 학습데이터선정 -----------------------------------
+set.seed(2021)
+index <- sample(1:nrow(user_mg), size = nrow(user_mg)*0.8)
+train <- user_mg[index, ]
+#test set은 추천 받을 사용자리스트가 될거임
+recommenderUserList  <- user_mg[-index,]
+
+#행의 총합 25개 이상의 아이템(영화)만 선택 ------------------------
+#아이템이 적은 것은 왜곡된 추천결과를 보내줄 수 있음
+train2 <- train[rowCounts(train)>5]
+check = as(train2, "matrix")
+
+eval_sets3 <- evaluationScheme(data = train2, 
+                              method = "cross-validation",
+                              train = .8, 
+                              given = 6,
+                              goodRating = 3.5, 
+                              k = 3)
+##추천모델생성 -----------------------------------------------------
+mg_UBCF <- Recommender(train2, 
+                      method = "UBCF",
+                      parameter="Cosine")
+mg_UBCF
+
+mg_IBCF <- Recommender(train2, 
+                      method = "IBCF",
+                      parameter="Cosine") # 시간소요
+mr_IBCF
+##추천모델평가 -----------------------------------------------------
+#추천
+UBCFlist3 <- predict(mg_UBCF, recommenderUserList, n=5)
+IBCFlist3 <- predict(mg_IBCF, recommenderUserList, n=5)
+#추천 받은 리스트
+head(as(UBCFlist3, "list"),2) 
+head(as(IBCFlist3, "list"),2)
+
+mr_al_UBCF <- list("user-based CF_Cosine" = list(name="UBCF",
+                                                 parameter=
+                                                   list(method="Cosine")),
+                   "user-based CF_Pearson" = list(name="UBCF",
+                                                 parameter=
+                                                   list(method="Pearson")))
+
+mr_al_IBCF <- list("item-based CF_Cosine" = list(name="IBCF",
+                                                 parameter=
+                                                   list(method="Cosine")),
+                   "item-based CF_Pearson" = list(name="IBCF",
+                                                 parameter=
+                                                   list(method="Pearson")))
+
+###########################################################################
+###########################################################################
+#evaluate() -------------------------------------------------------
+result_gu <- evaluate(eval_sets3, mr_al_UBCF, n=c(1,3,5))
+result_gu
+avg(result_gu)
+saveRDS(result_gu, "./data/result_gu.rds") # 장르 알고리즘=mr_al_UBCF
+
+result_gi <- evaluate(eval_sets3, mr_al_IBCF, n=c(1,3,5))
+names(result_gi)
+avg(result_gi)
+saveRDS(result_gi, "./data/result_gi.rds") # 장르 알고리즘=mr_al_IBCF
+
+result_g_al <- evaluate(eval_sets3, algorithms, n=c(1,3,5))
+names(result_g_al)
+avg(result_g_al)
+saveRDS(result_g_al, "./data/result_g_al.rds") # 평점 알고리즘=algorithms
+
+########################################################################### 장르 최종 비교결정
+plot(result_gu, annotate=T, legend="topleft")
+plot(result_gu, annotate=T, "prec/rec", legend="bottomright")
+
+plot(result_gi, annotate=T, legend="topleft")
+plot(result_gi, annotate=T, "prec/rec", legend="bottomright")
+
+plot(result_al[c(1,3,4,5,6)], annotate=T, legend="topleft")
+plot(result_al[c(1,3,4,5,6)], annotate=T, "prec/rec", legend="bottomright")
+###########################################################################
+###########################################################################
+```
+```{r 2.2 장르콘텐츠, eval=FALSE}
+#영화/장르 벡터화 --------------------------
+mg <- read.csv("./data/mg.csv", header = T)
+mg <- mg[,c(2,4,3)]
+head(mg)
+
+library(reshape2)
+movie_genres <- acast(mg, title ~ genres, value.var = "value")
+movie_genres <- as.data.frame(movie_genres)
+# final_mg <- spread(mg, key = "genres", value = "value", fill = 0)
+# final_mg <- final_mg[,-c(1,2)]
+
+sim_users <- cor(movie_genres[, 1:6], use = "complete.obs")
+sim_users
+```
+
+# 장르 최종
+```{r 장르 최종}
+#####################################################################
+## SVD_ Pearson ==> Cosine
+rating_final_eval <- evaluationScheme(data = df,
+                              method = "cross-validation",
+                              train = 0.8,
+                              k = 3,
+                              goodRating = 3,
+                              given = 20)
+
+# Training dataset modeling ------------------------ (1)
+genre_SVD_P <- Recommender(data = getData(rating_final_eval, "train"),
+                           method = "SVD", 
+                           parameter = "Pearson")
+genre_SVD_P
+# Prediction
+genre_SVD_P_pred <- predict(genre_SVD_P, 
+                     newdata = getData(rating_final_eval, "known"),
+                     n = 10, type = "ratings")
+genre_SVD_P_pred
+# Calculate accuracy
+genre_SVD_P_pred_acc <- calcPredictionAccuracy(x = genre_SVD_P_pred,
+                                        data = getData(rating_final_eval, "unknown"),
+                                        byUser = TRUE) # byUser = TRUE : 각 사용자들에 대한 모델의 정확도가 계산
+#head(accuracy_eval, 10)
+colMeans(genre_SVD_P_pred_acc, na.rm=T) #정확도 #################################### 최종 rmse
+
+genre_SVD_P_pred_acc2 <- evaluate(x = rating_final_eval, 
+                           method = "SVD",
+                           parameter = "Pearson")
+head(getConfusionMatrix(genre_SVD_P_pred_acc2))
+
+plot(genre_SVD_P_pred_acc)
+plot(genre_SVD_P_pred_acc2, annotate=T, legend="topleft")
+plot(genre_SVD_P_pred_acc2, annotate=T, "prec/rec", legend="bottomright")
+#####################################################################
+#####################################################################
+## IBCF_ Pearson ==>UBCF_ Pearson
+rating_final_eval <- evaluationScheme(data = df,
+                              method = "cross-validation",
+                              train = 0.8,
+                              k = 3,
+                              goodRating = 3,
+                              given = 20)
+
+# Training dataset modeling ------------------------ (1)
+genre_IBCF_P <- Recommender(data = getData(rating_final_eval, "train"),
+                           method = "IBCF", 
+                           parameter = "Pearson")
+genre_IBCF_P
+# Prediction
+genre_IBCF_P_pred <- predict(genre_IBCF_P, 
+                     newdata = getData(rating_final_eval, "known"),
+                     n = 10, type = "ratings")
+genre_IBCF_P_pred
+# Calculate accuracy
+genre_IBCF_P_pred_acc <- calcPredictionAccuracy(x = genre_IBCF_P_pred,
+                                        data = getData(rating_final_eval, "unknown"),
+                                        byUser = TRUE) # byUser = TRUE : 각 사용자들에 대한 모델의 정확도가 계산
+#head(accuracy_eval, 10)
+colMeans(genre_IBCF_P_pred_acc, na.rm=T) #정확도 #################################### 최종 rmse
+
+genre_IBCF_P_pred_acc2 <- evaluate(x = rating_final_eval, 
+                           method = "IBCF",
+                           parameter = "Pearson")
+head(getConfusionMatrix(genre_IBCF_P_pred_acc2))
+
+plot(genre_SVD_P_pred_acc)
+plot(genre_SVD_P_pred_acc2, annotate=T, legend="topleft")
+plot(genre_SVD_P_pred_acc2, annotate=T, "prec/rec", legend="bottomright")
+#####################################################################
+#####################################################################
+
+genre_SVD_P_pred <- predict(genre_SVD_P, 
+                     newdata = getData(rating_final_eval, "known"),
+                     n = 10, type = "topNlist")
+
+
+
+```
+
+
+## 2.2. 추가분석 - 알고리즘에 따른 추천
+```{r 2.3 알고리즘}
+#위 분석 결과로 나온 UBCF, IBCF method 가져와서
+algorithms <- 
+  list( RANDOM = list(name = "RANDOM", param = NULL),
+        POPULAR = list(name = "POPULAR", param = NULL),
+        HYBRID = list(name = "HYBRID", param = list(recommenders = 
+                 list( RANDOM = list(name = "RANDOM", param = NULL),
+                       POPULAR = list(name = "POPULAR", param = NULL)))),
+        SVD_C = list(name = "SVD", param = list(method = "cosine")),
+        SVD_P = list(name = "SVD", param = list(method = "pearson")),
+        HYBRID2 = list(name = "HYBRID", param = list(recommenders = 
+                 list( RANDOM = list(name = "UBCF", param = NULL),
+                       POPULAR = list(name = "SVD", param = NULL)))),
+        HYBRID3 = list(name = "HYBRID", param = list(recommenders = 
+                 list( RANDOM = list(name = "IBCF", param = NULL),
+                       POPULAR = list(name = "SVD", param = NULL))))    
+)
+```
+```{r 평점 옛날 코드}
+
+# m <- m[order(m$movieId),]
+# m$idx <- 1:nrow(m)
+# mr <- merge(m, r, key='movieId', all.y=T)
+# mr <- mr[,-c(1,7)]
+# mr <- mr[,-c(2,3)]
+# 
+# sum(duplicated(mr)) #[1] 3
+# which(duplicated(mr)|duplicated(mr,fromLast=T))
+# mr[which(duplicated(mr)|duplicated(mr,fromLast=T)),]
+# mr <- mr[-which(duplicated(mr)|duplicated(mr,fromLast=T)),]
+# mr <- mr[-c(80209,88669),]
+# 
+# write.csv(mr, "./data/mr.csv",row.names = F)
+
+mr <- read.csv("./data/mr.csv", header=T)
+mr<-mr[,c(2,1,3)]
+# final_mr <- spread(mr, key = "title", value = "rating", fill = 0)
+# final_mr <- final_mr[,-1]
+# df <- as(final_mr, 'matrix') 
+df <- as(mr, 'realRatingMatrix')
+image(df[1:100, 1:100], main = "Real rating matrix") #sparse
+
+#---------------------------------------
+#hist(getRatings(df), main="평점분포") #3이하 0(부정), 3초과 1(긍정)..
+
+set.seed(2021)
+index <- sample(1:nrow(df), size = nrow(df) * 0.8)
+train <- df[index, ]
+test <- df[-index, ]
+dim(train) #488*9719
+dim(test)  #122*9719
+
+#--------------------------------------- UBCF
+UBCF_mr <- Recommender(data = train, method = "UBCF")
+UBCF_mr
+UBCF_mr@model$data #Normalized using center on rows.
+
+UBCF_mr_pred <- predict(UBCF_mr, newdata = test, n = 5)
+UBCF_mr_pred_list <- sapply(UBCF_mr_pred@items, 
+                            function(x) { colnames(df)[x] })
+
+#table(unlist(lapply(UBCF_mr_pred_list, length)))
+mean(rowCounts(df)) #1인당 평균 165개의 영화를 평가
+# df_modify <- df[rowCounts(df) <= 165]
+# dim(df_modify) #453*9719
+# boxplot(Matrix::rowMeans(df_modify))
+
+# "split" "bootstrap" "cross-validation"
+eval_sets <- evaluationScheme(data = df,
+                              method = "cross-validation",
+                              train = 0.8,
+                              k = 3,
+                              goodRating = 3,
+                              given = 20)
+
+sapply(eval_sets@runsTrain, length) #k
+
+# getData()
+# train : 훈련 데이터
+# known : 테스트 데이터, 추천을 구축하기 위해 사용되는 아이템으로 구성
+# unknown : 테스트 데이터, 추천을 테스트하기 위해 사용되는 아이템으로 구성
+
+# Recommender() 
+# 함수를 모델링 후, predict() 함수로 ratings 값을 구한 다음 calcPredictionAccuracy() 함수를 통해 모델의 정확도 메트릭을 계산
+
+# Training dataset modeling ------------------------ (1)
+UBCF_eval <- Recommender(data = getData(eval_sets, "train"),
+                           method = "UBCF", 
+                           parameter = NULL)
+UBCF_eval
+# Prediction
+UBCF_eval_pred <- predict(UBCF_eval, 
+                     newdata = getData(eval_sets, "known"),
+                     n = 10, type = "ratings")
+UBCF_eval_pred
+# Calculate accuracy
+accuracy_eval <- calcPredictionAccuracy(x = UBCF_eval_pred,
+                                        data = getData(eval_sets, "unknown"),
+                                        byUser = TRUE) # byUser = TRUE : 각 사용자들에 대한 모델의 정확도가 계산
+#head(accuracy_eval, 10)
+colMeans(accuracy_eval, na.rm=T) #정확도
+accuracy_eval2 <- evaluate(x = eval_sets, 
+                           method = "UBCF")
+head(getConfusionMatrix(accuracy_eval2))
+
+#--------------------------------------- IBCF
+IBCF_mr <- Recommender(data = train, 
+                             method = "IBCF",
+                             parameter = list(k = 30))
+IBCF_mr
+str(getModel(IBCF_mr))
+# Prediction
+IBCF_mr_pred <- predict(IBCF_mr, newdata = test, n = 10)
+IBCF_mr_pred_list <- sapply(IBCF_mr_pred@items, 
+                     function(x) { colnames(df)[x] })
+# Calculate accuracy
+eval_sets2 <- evaluationScheme(data = df,
+                               method = "cross-validation",
+                               train = 0.8,
+                               k = 3,
+                               goodRating = 3,
+                               given = 20)
+# Training dataset modeling ------------------------ (2)
+IBCF_eval <- Recommender(data = getData(eval_sets2, "train"),
+                            method = "IBCF", 
+                            parameter = NULL)
+IBCF_eval
+# Prediction
+IBCF_eval_pred <- predict(IBCF_eval, 
+                      newdata = getData(eval_sets2, "known"),
+                      n = 10, type = "ratings")
+IBCF_eval_pred
+# Calculate accuracy
+accuracy_eval3 <- calcPredictionAccuracy(x = IBCF_eval_pred,
+                                         data = getData(eval_sets2, "unknown"),
+                                         byUser = TRUE) # byUser = TRUE : 각 사용자들에 대한 모델의 정확도가 계산
+colMeans(accuracy_eval3, na.rm=T) #정확도
+accuracy_eval4 <- evaluate(x = eval_sets2, 
+                           method = "IBCF", 
+                           n = seq(10, 100, by = 10))
+#head(getConfusionMatrix(accuracy_eval4))
+
+plot(accuracy_eval2, annotate = TRUE, main = "ROC Curve")
+plot(accuracy_eval4, annotate = TRUE, main = "ROC Curve")
+plot(accuracy_eval2, "prec/rec", annotate = TRUE, main = "Precision-Recall")
+plot(accuracy_eval4, "prec/rec", annotate = TRUE, main = "Precision-Recall")
+
+plot(accuracy_eval, main = " ")
+plot(accuracy_eval3, main = " ")
+
+
+##################################################################################
+#--------------------------------------- 매개변수 튜닝
+# IBCF 모형을 구축하는 과정에서 최종적 모형을 구축하기 위해 몇 가지 최적의 값을 선택해야 한다.
+# - 아이템 간 유사도를 계산하는 데 이웃의 수에 대한 최적의 값
+# - 코사인 또는 피어슨 상관계수 중 유사도 계산 기준 선택
+# - 따라서 k값이 될 수 있는 후보군을 벡터로 설정
+vector_k <- c(5, 10, 20, 30, 40)
+mod1 <- lapply(vector_k, function(k, l) { 
+  list(name = "IBCF", parameter = list(method = "cosine", k = k)) 
+  })
+names(mod1) <- paste0("IBCF_cos_k_", vector_k)
+names(mod1)
+mod2 <- lapply(vector_k, function(k, l) { 
+  list(name = "IBCF", parameter = list(method = "pearson", k = k)) 
+  })
+names(mod2) <- paste0("IBCF_pea_k_", vector_k)
+names(mod2)
+
+mod <- append(mod1, mod2) # vector merging
+
+# 시간 소요 (many)
+list_results <- evaluate(x = eval_sets2, 
+                         method = mod,
+                         n = c(1, 5, seq(10, 100, by=10)))
+
+plot(list_results, annotate = c(1, 2), legend = "topleft")
+title("ROC Curve")
+plot(list_results, "prec/rec", annotate = 1, legend = "bottomright")
+title("Precision-Recall")
+```
+```{r 확인, eval=FALSE}
+#--------------------------------------- 
+# split
+unique(rowCounts(getData(eval_sets, "known")))
+qplot(rowCounts(getData(eval_sets, "unknown"))) +
+  geom_histogram(binwidth = 10) +
+  ggtitle("unknown items by the users")
+
+# bootstrap
+table_train <- table(eval_sets@runsTrain[[1]])
+n_repetitions <- factor(as.vector(table_train))
+qplot(n_repetitions) + ggtitle("Number of repetitions in the traing set")
+
+#추천 결과 평가 시각화 ------------------------
+#예측 평점 평가
+
+qplot(rowCounts(eval_prediction)) +
+  geom_histogram(binwidth = 10) + 
+  ggtitle("Distribution of movies per user")
+
+eval_accuracy <- calcPredictionAccuracy(x = eval_prediction, 
+                                        data = getData(eval_sets, "unknown"), 
+                                        byUser = TRUE)
+head(eval_accuracy)
+qplot(eval_accuracy[, "RMSE"]) +
+  geom_histogram(binwidth = 0.1) +
+  ggtitle("Distribution of the RMSE by user")
+
+eval_accuracy <- calcPredictionAccuracy(x = eval_prediction, 
+                                        data = getData(eval_sets, "unknown"), 
+                                        byUser = FALSE)
+eval_accuracy
+
+#추천 결과 평가 ------------------------
+
+head(getConfusionMatrix(results)[[1]])
+
+columns_to_sum <- c("TP", "FP", "FN", "TN")
+indices_summed <- Reduce("+", getConfusionMatrix(results))[, columns_to_sum]
+head(indices_summed)
+
+plot(results, annotate = TRUE, main = "ROC curve")
+plot(results, "prec/rec", annotate = TRUE, main = "Precision-recall")
+
+#가장 좋은 성능을 가지는 모델 선택 ------------------------
+models_to_evaluate <- list(
+  IBCF_cos = list(name = "IBCF", param = list(method = "cosine")),
+  IBCF_cor = list(name = "IBCF", param = list(method = "pearson")),
+  UBCF_cos = list(name = "UBCF", param = list(method = "cosine")),
+  UBCF_cor = list(name = "UBCF", param = list(method = "pearson")),
+  SVD_cor = list(name = "SVD", param = list(method = "cosine")),
+  random = list(name = "RANDOM", param = NULL))
+
+n_recommendations <- c(1, 5, seq(10, 100, 10))
+
+list_results <- evaluate(x = eval_sets, 
+                         method = models_to_evaluate, 
+                         n = n_recommendations)
+
+sapply(list_results, class) == "evaluationResults"
+avg_matrices <- lapply(list_results, avg)
+head(avg_matrices$IBCF_cos[, 5:8])
+```
+
+</br></br>
+
+---
+
+</br></br>
+
+## 3. 추천영화 시각화
+
+```{r 시각화, eval=FALSE}
+# 최종 결과 predict 결과 가지고.
+# UBCF_mr_pred ------------------------
+min_rating <- min(IBCF_mr_pred@ratings[[1]])
+max_rating <- max(IBCF_mr_pred@ratings[[1]])
+e_value <- (max_rating-min_rating)/10
+
+pre_list <- sapply(IBCF_mr_pred@items, function(x) {colnames(train)[x]})
+table(unlist(lapply(pre_list, length)))
+knitr::kable(pre_list[])
+
+pre_ratings <- IBCF_mr_pred@ratings[[1]]
+
+n=10
+for(i in 1:n){
+  
+  if(pre_ratings[i] <= max_rating && pre_ratings[i] > max_rating-e_value)
+    { pre_ratings[i] <- 100 } #가중치 100
+  
+  else if(pre_ratings[i] <= max_rating-e_value && pre_ratings[i] > max_rating-e_value*2)
+    { pre_ratings[i] <- 90 }  #가중치 90
+  
+  else if(pre_ratings[i] <= max_rating-e_value*2 && pre_ratings[i] > max_rating-e_value*4)
+    { pre_ratings[i] <- 70 }  #가중치 70
+  
+  else if(pre_ratings[i] <= max_rating-e_value*4 && pre_ratings[i] > max_rating-e_value*6)
+    { pre_ratings[i] <- 50 }  #가중치 50
+  
+  else { pre_ratings[i] <- 25 }
+
+}
+
+# 워드클라우드
+pre_vec <- c(pre_list)
+pre_vec <- as.data.frame(pre_vec)
+pre_vec[ , "freq" ] <- c(pre_ratings)
+set.seed(1234)
+par(bg="black")
+pal<- brewer.pal(7,"YlOrRd")
+wordcloud(words = pre_vec$pre_vec,              # 단어 
+                         freq = pre_vec$freq,   # 빈도
+                         min.freq = 25,         # 최소 단어 빈도
+                         max.words = 300,       # 표현 단어 수 
+                         random.order = F,      # 고빈도 단어 중앙 배치
+                         rot.per = 0,           # 회전 단어 비율 
+                         scale = c(1, 0.25),    # 단어 크기 범위
+                         colors = pal)          # 색깔 목록
+```
+
+</br></br>
+
+---
+
+  - R과 R shiny를 활용한 추천시스템 구현
+  - 패키지 내 다양한 함수들을 보다 적절하게 사용하기 위해 이론 학습이 필요하다.
+
+  - 위 패키지는 지속적으로 업그레이드가 되고 있기 때문에 [Reference Manual](https://cran.r-project.org/web/packages/recommenderlab/recommenderlab.pdf)을 활용한다.
