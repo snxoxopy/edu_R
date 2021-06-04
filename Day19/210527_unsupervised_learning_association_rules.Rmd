@@ -1,0 +1,109 @@
+---
+title: "unsupervised learning"
+author: "suzinee"
+date: '2021 5 27 '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## 연관 규칙
+- 데이터에 숨어있는 시간 또는 항목간의 규칙
+
+## 연관 분석
+- 데이터 속의 연관규칙을 찾아내는 데이터 분석
+- 장바구니 분석
+
+## 연관성 분석 주요 측도
+1. 지지도(Support)
+- 전체 데이터세트에서 해당 아이템 집합이 포함된 비율
+- 해당 지표의 필요성
+  - 수집된 데이터의 양을 기준으로 빈도수를 해석
+  - 상대적으로 해석해야함
+  - 빈도수가 높은 것을 위주로 연관성을 찾아본다.
+- $\frac{P(X andY)}{P(X U X)}$
+
+2. 신뢰도(Confidence)
+- X -> Y: X를 포함한 데이터 세트 중 X, Y 둘다 포함된 데이터
+- $\frac{P(X andY)}{P(X)}$
+
+
+3. 향상도(Lift)
+- 연관성 규칙 X->Y가 탐색 되었을때, 경우의 수가 많은지, Y 사례가 많은지 확인
+- 신뢰도/지지도
+- $\frac{P(Y|X)}{P(Y)}$
+
+- 예시)
+
+|구매항목|건수|
+|:------:|:---:|
+|{족발, 순대, 보쌈}|5|
+|{김밥, 족발, 순대, 떡볶이, 튀김}|2|
+|{순대, 보쌈, 막국수, 족발}|4|
+|{김밥, 족발, 순대}|2|
+|{떡볶이, 순대, 튀김}|2|
+
+- 알고리즘
+ - Aprior: 빈출 아이템 집합을 효과적으러 계산하기 위해 경우의 수를 효과적으로 줄여줌
+
+
+```{r}
+#install.packages("arules")
+#install.packages("arulesViz")
+
+library(arules)
+library(arulesViz)
+data(Groceries)
+# data.frame 구조
+str(Groceries)
+
+inspect(Groceries[1:10])
+summary(Groceries)
+result_rules <- apriori(Groceries,
+                        parameter = list(support=0.005, confidence=0.5, minlen=2))
+
+result_rules
+summary(result_rules)
+inspect(result_rules[1:10])
+
+sort(itemFrequency(Groceries, type="absolute"), decreasing = T)
+itemFrequencyPlot(Groceries,topN=10, type="absolute")
+itemFrequencyPlot(Groceries,topN=10, type="relative")
+
+```
+
+```{r}
+result_rules <- apriori(Groceries, parameter=list(support=0.005, confidence=0.5, minlen=2)) # minlen X->Y 해당하는 길이가 최소 2
+
+result_rules
+summary(result_rules)
+inspect(result_rules[1:10])
+
+plot(result_rules, method="graph", control = list(type="Items"))
+
+plot(result_rules, method="grouped")
+
+```
+
+lift, support 결과가 클 수록 패턴을 해석해볼 만하다.
+plot(result_rules, method="grouped")
+
+transcation
+
+조건 -> 결과
+ex) item1 -> {item2, item3}
+해석: itme1을 구매하면 item2, item3을 구매한다.
+
+|item1|item2|item3|item4|
+|:---:|:---:|:---:|:---:|
+|1|1|1|0|
+
+## 목적
+
+
+
+
+
